@@ -9,8 +9,10 @@ mutable struct SIXRDMetaPopParams
     SIXRDMetaPopParams() = new()
 end
 
-function SIXRDMetaPopODE(state::Matrix{Float64}, params::SIXRDMetaPopParams, t::Int64=0)::Matrix{Float64}
-    p = params.params; adj = params.adj 
+function SIXRDMetaPopODE(state::Matrix{Float64}, params::Matrix{Float64},
+    adj::SparseMatrixCSC{Float64})::Matrix{Float64}
+
+    p = params; adj = adj 
     adj -= Diagonal(adj) # remove self travels
     num_nodes = convert(Int, size(state, 1))
 
@@ -72,3 +74,12 @@ function SIXRDMetaPopODE(state::Matrix{Float64}, params::SIXRDMetaPopParams, t::
     return ret_mat
 end
 
+function accumulate_groups(vec1::AbstractVector, vec2::AbstractVector)
+    groups = unique(vec2)
+
+    d = Dict{eltype(vec2),eltype(vec1)}()
+    for i in groups
+        d[i] = sum(vec1[vec2 .== i])
+    end
+    return d
+end
