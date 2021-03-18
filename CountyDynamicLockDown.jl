@@ -9,23 +9,24 @@ using DifferentialEquations
 using Plots
 
 include("SIXRD.jl")
-
+data_path = normpath(joinpath(@__DIR__, "data"))
 # Parameters
 ######################################
 
 # each duration is the number of days the phase lasts
-duration_list   = [50,     15,     52,     21,     21,     21,     21,     21,     400]
-β_list          = [0.37,   0.37,   0.37,   0.37,   0.37,   0.37,   0.37,   0.37 ,  0.37]
-μ_list          = [0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1]
-c_list          = [1.0,    0.7,    0.4,    0.4,    0.5,    0.6,    0.65,   0.7,    0.75]
-α_list          = [0.0028, 0.0028, 0.0028, 0.0028, 0.0028, 0.0028, 0.0028, 0.0028, 0.0028]
-κ_list          = [0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1]
-max_dist_list   = [1000.0, 2.0,    2.0,    2.0,    5.0,    5.0,    20.0,   1000.0, 1000.0]
-compliance_list = [0.7,    0.7,    0.7,    0.7,    0.7,    0.7,    0.7,    0.7,    0.7]
-tmax            = 600
-Imax            = 1400
+phase_duration     = [50,     15,     52,     21,     21,     21,     21,     21,     400]
+β_list             = [0.37,   0.37,   0.37,   0.37,   0.37,   0.37,   0.37,   0.37 ,  0.37]
+μ_list             = [0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1]
+c_list             = [1.0,    0.7,    0.4,    0.4,    0.5,    0.6,    0.65,   0.7,    0.75]
+α_list             = [0.0028, 0.0028, 0.0028, 0.0028, 0.0028, 0.0028, 0.0028, 0.0028, 0.0028]
+κ_list             = [0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1]
+phase_max_distance = [1000.0, 2.0,    2.0,    2.0,    5.0,    5.0,    20.0,   1000.0, 1000.0]
+phase_compliance   = [0.7,    0.7,    0.7,    0.7,    0.7,    0.7,    0.7,    0.7,    0.7]
+tmax               = 200
+Imax               = 1400
 ######################################
 
+# add population to sim struct
 
 
 travel_probabilities = readdlm("/home/roryh/Repos/EpiGraph-cpp/data/processed/ed_soa_travel_prob_mat.csv", ',', Float64)
@@ -33,153 +34,125 @@ distances = readdlm("/home/roryh/Repos/EpiGraph-cpp/data/processed/ed_soa_dist_m
 population = readdlm("/home/roryh/Repos/EpiGraph-cpp/data/processed/ed_soa_population.csv", ',', Int64, skipstart=1)[:,1]
 counties = vec(readdlm("/home/roryh/Repos/EpiGraph-cpp/data/processed/ed_soa_county.csv", String, skipstart=1))
 
+struct Phases
+    β::Vector{Float64}
+    c::Vector{Float64}
+    μ::Vector{Float64}
+    α::Vector{Float64}
+    κ::Vector{Float64}
 
-
-function CountyDynamicLockdownODE(state::Matrix{Float64}, p::SIXRDMetaPopParams, t::Int64)
-    return SIXRDMetaPopODE(state, p.params, p.adj)
+    max_distance::Vector{Float64}
+    compliance::Vector{Float64}
+    duration::Vector{Int64}
 end
 
-struct PhaseParams
-    β::Float64
-    c::Float64
-    μ::Float64
-    α::Float64
-    κ::Float64
-    max_distance::Float64
-    compliance::Float64
-    duration::Int64
-
-    function PhaseParams(β, c, μ, α, κ, max_distance, compliance, duration)
-        new(β, c, μ, α, κ, max_distance, compliance, duration)
-    end
+struct Nodes
+    cur_duration::Vector{Int64}
+    cur_max_dist::Vector{Float64}
+    cur_compliance::Vector{Float64}
+    cur_phase::Vector{Int64}
+    cat_vec::Vector{Categorical}
+    counties::Vector{String}
 end
 
-mutable struct SimParams
-    phase_params::Vector{PhaseParams}
-    Imax
-    p
-    adj
+mutable struct Sim
+    # phase params
+    phases::Phases
 
-    num_nodes
+    # node and network properties
+    nodes::Nodes
+    Imax::Int64
+
+    # sixrd params
+    p::Matrix{Float64}
+    adj::SparseMatrixCSC{Float64}
 end
 
-pp = SimParams()
-pp.durations = duration_list
-pp.β = β_list
-pp.μ = μ_list
-pp.c = c_list
-pp.α = α_list
-pp.κ = κ_list
-pp.max_distances = max_dist_list
-pp.compliances = compliance_list
-pp.Imax = Imax
-pp.p = ones(Float64, num_nodes, 5)
-pp.p[:, 1] .*= β_list[1]
-pp.p[:, 2] .*= c_list[1]
-pp.p[:, 3] .*= μ_list[1]
-pp.p[:, 4] .*= α_list[1]
-pp.p[:, 5] .*= κ_list[1]
-
-
-
-num_nodes   = size(population, 1)
-num_phases  = size(duration_list, 1)
-state       = zeros(Float64, num_nodes, 5)
-state[:, 1] = population
-
-p = SIXRDMetaPopParams()
-
-p.params         = ones(Float64, num_nodes, 5)
-p.params[:, 1] .*= β_list[1]
-p.params[:, 2] .*= c_list[1]
-p.params[:, 3] .*= μ_list[1]
-p.params[:, 4] .*= α_list[1]
-p.params[:, 5] .*= κ_list[1]
-
-cur_duration   = ones(Int64, num_nodes) * duration_list[1]
-cur_max_dist   = ones(Float64, num_nodes) * max_dist_list[1]
-cur_compliance = ones(Float64, num_nodes) * compliance_list[1]
-cur_phase = ones(Int64, num_nodes)
-
-cat_vec = Array{Categorical,1}(undef, num_nodes)
-
-for i = 1:num_nodes
-    cat_vec[i] = Categorical(travel_probabilities[i, :])
+function SimOde(state::Matrix{Float64}, sim::Sim, t)
+    return SIXRDMetaPopODE(state, sim.p, sim.adj)
 end
-
-state[3, 2] += 6
-
-p.adj = gen_sparse_array(cat_vec, round.(Int64, population * 0.6))
-prob = DiscreteProblem(CountyDynamicLockdownODE, state, (0, tmax), p) 
-integrator = init(prob, FunctionMap())
 
 condition = function (t, u, integrator)
     true
 end
 
-
-function affect!(integrator)
-    integrator.p.adj = gen_sparse_array(cat_vec, round.(Int64, population * 0.6))
+function update_sim!(sim::Sim, state::Matrix{Float64})
+    sim.adj = gen_sparse_array(sim.nodes.cat_vec, 
+    round.(Int64, population * 0.6))
     
-    cur_duration .-= 1
+    sim.nodes.cur_duration .-= 1
+    num_phases = size(sim.phases.duration, 1)
+    num_verts = size(sim.nodes.cur_duration, 1)
     
-    I_counties = accumulate_groups(state[:, 2], counties)
+    I_counties = accumulate_groups(state[:, 2], sim.nodes.counties)
     
-    for v = 1:num_nodes
+    @inbounds Threads.@threads for v = 1:num_verts
 
         # node belongs to county over Imax
-        if I_counties[counties[v]] > Imax && cur_phase[v] > 3
-            cur_phase[v] = 3
-            cur_duration[v] = duration_list[cur_phase[v]]
+        if I_counties[sim.nodes.counties[v]] > Imax && sim.nodes.cur_phase[v] > 3
+            sim.nodes.cur_phase[v] = 3
+            sim.nodes.cur_duration[v] = sim.phases.duration[sim.nodes.cur_phase[v]]
         # node reached end of duration in phase
-        elseif cur_duration[v] == 0 
-            if cur_phase[v] <= num_phases
-                cur_phase[v] += 1
-                cur_duration[v] = duration_list[cur_phase[v]]
+        elseif sim.nodes.cur_duration[v] == 0 
+            if sim.nodes.cur_phase[v] <= num_phases
+                sim.nodes.cur_phase[v] += 1
+                sim.nodes.cur_duration[v] = sim.phases.duration[sim.nodes.cur_phase[v]]
             else 
-                cur_duration[v] = duration_list[cur_phase[v]]
+                sim.nodes.cur_duration[v] = sim.phases.duration[sim.nodes.cur_phase[v]]
             end
         end
     end
     
-    integrator.p.params[:, 1] = β_list[cur_phase]
-    integrator.p.params[:, 2] = c_list[cur_phase]
-    integrator.p.params[:, 3] = μ_list[cur_phase]
-    integrator.p.params[:, 4] = α_list[cur_phase]
-    integrator.p.params[:, 5] = κ_list[cur_phase]
+    sim.p[:, 1] = sim.phases.β[sim.nodes.cur_phase]
+    sim.p[:, 2] = sim.phases.c[sim.nodes.cur_phase]
+    sim.p[:, 3] = sim.phases.μ[sim.nodes.cur_phase]
+    sim.p[:, 4] = sim.phases.α[sim.nodes.cur_phase]
+    sim.p[:, 5] = sim.phases.κ[sim.nodes.cur_phase]
 end
-# main sim loop
-@time for t = 1:tmax
-    println(t)
-    step!(integrator)
-    
-    integrator.p.adj = gen_sparse_array(cat_vec, round.(Int64, population * 0.6))
-    
-    cur_duration .-= 1
-    
-    I_counties = accumulate_groups(state[:, 2], counties)
-    
-    Threads.@threads for v = 1:num_nodes
 
-        # node belongs to county over Imax
-        if I_counties[counties[v]] > Imax && cur_phase[v] > 3
-            cur_phase[v] = 3
-            cur_duration[v] = duration_list[cur_phase[v]]
-        # node reached end of duration in phase
-        elseif cur_duration[v] == 0 
-            if cur_phase[v] <= num_phases
-                cur_phase[v] += 1
-                cur_duration[v] = duration_list[cur_phase[v]]
-            else 
-                cur_duration[v] = duration_list[cur_phase[v]]
-            end
-        end
-    end
-    
-    integrator.p.params[:, 1] = β_list[cur_phase]
-    integrator.p.params[:, 2] = c_list[cur_phase]
-    integrator.p.params[:, 3] = μ_list[cur_phase]
-    integrator.p.params[:, 4] = α_list[cur_phase]
-    integrator.p.params[:, 5] = κ_list[cur_phase]
+function f!(integrator)
+    update_sim!(integrator.p, integrator.u)
 end
+
+
+num_verts   = size(population, 1)
+num_phases  = size(phase_duration, 1)
+
+phases = Phases(β_list, c_list, μ_list, α_list, κ_list, 
+phase_max_distance, phase_compliance, phase_duration)
+
+cur_duration   = ones(Int64, num_verts) * phase_duration[1]
+cur_max_dist   = ones(Float64, num_verts) * phase_max_distance[1]
+cur_compliance = ones(Float64, num_verts) * phase_compliance[1]
+cur_phase      = ones(Int64, num_verts)
+
+cat_vec = Array{Categorical,1}(undef, num_verts)
+
+for i = 1:num_verts
+    cat_vec[i] = Categorical(travel_probabilities[i, :])
+end
+
+nodes = Nodes(cur_duration, cur_max_dist, cur_compliance, 
+cur_phase, cat_vec, counties)
+
+
+p = zeros(Float64, num_verts, 5)
+p[:, 1] .*= β_list[1]
+p[:, 2] .*= c_list[1]
+p[:, 3] .*= μ_list[1]
+p[:, 4] .*= α_list[1]
+p[:, 5] .*= κ_list[1]
+
+state       = zeros(Float64, num_verts, 5)
+state[:, 1] = population
+
+adj = gen_sparse_array(cat_vec, round.(Int64, population * 0.6))
+
+sim = Sim(phases, nodes, Imax, p, adj)
+
+state[3, 2] += 6
+
+prob = DiscreteProblem(SimOde, state, (0, tmax), sim) 
+cb = DiscreteCallback(condition, f!, save_positions=(true, false))
+sol = solve(prob, callback=cb)
 
