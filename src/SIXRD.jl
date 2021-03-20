@@ -1,6 +1,7 @@
+    
+using SparseArrays
+using LinearAlgebra
 
-
-include("RandomArray.jl")
 
 mutable struct SIXRDMetaPopParams
     params::Matrix{Float64}

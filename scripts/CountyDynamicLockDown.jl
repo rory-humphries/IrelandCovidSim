@@ -4,12 +4,12 @@ using Random
 using Distributions
 using SparseArrays
 using LinearAlgebra
-using DynamicalSystems
 using DifferentialEquations
 using Plots
 
-include("SIXRD.jl")
-data_path = normpath(joinpath(@__DIR__, "data"))
+using CovidSim
+
+data_path = normpath(joinpath(@__DIR__, "..", "data"))
 # Parameters
 ######################################
 
@@ -22,17 +22,17 @@ c_list             = [1.0,    0.7,    0.4,    0.4,    0.5,    0.6,    0.65,   0.
 κ_list             = [0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1]
 phase_max_distance = [1000.0, 2.0,    2.0,    2.0,    5.0,    5.0,    20.0,   1000.0, 1000.0]
 phase_compliance   = [0.7,    0.7,    0.7,    0.7,    0.7,    0.7,    0.7,    0.7,    0.7]
-tmax               = 200
+tmax               = 20
 Imax               = 1400
 ######################################
 
 # add population to sim struct
 
 
-travel_probabilities = readdlm("/home/roryh/Repos/EpiGraph-cpp/data/processed/ed_soa_travel_prob_mat.csv", ',', Float64)
-distances = readdlm("/home/roryh/Repos/EpiGraph-cpp/data/processed/ed_soa_dist_mat.csv", ',', Float64)
-population = readdlm("/home/roryh/Repos/EpiGraph-cpp/data/processed/ed_soa_population.csv", ',', Int64, skipstart=1)[:,1]
-counties = vec(readdlm("/home/roryh/Repos/EpiGraph-cpp/data/processed/ed_soa_county.csv", String, skipstart=1))
+travel_probabilities = readdlm(joinpath(data_path, "processed", "ed_soa_travel_prob_mat.csv"), ',', Float64)
+distances = readdlm(joinpath(data_path, "processed", "ed_soa_dist_mat.csv"), ',', Float64)
+population = readdlm(joinpath(data_path, "processed", "ed_soa_population.csv"), ',', Int64, skipstart=1)[:,1]
+counties = vec(readdlm(joinpath(data_path, "processed", "ed_soa_county.csv"), String, skipstart=1))
 
 struct Phases
     β::Vector{Float64}

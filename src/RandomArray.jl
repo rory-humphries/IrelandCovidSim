@@ -1,3 +1,4 @@
+
 using DelimitedFiles
 using StatsBase
 using Random
@@ -23,5 +24,3 @@ function gen_sparse_array(x::Array{Categorical,1}, vals::Array{Int64,1})
     end
     return sparse(I, J, V)
 end
-
-
