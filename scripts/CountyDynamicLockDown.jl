@@ -10,6 +10,7 @@ using Plots
 using CovidSim
 
 data_path = normpath(joinpath(@__DIR__, "..", "data"))
+
 # Parameters
 ######################################
 
@@ -24,6 +25,9 @@ phase_max_distance = [1000.0, 2.0,    2.0,    2.0,    5.0,    5.0,    20.0,   10
 phase_compliance   = [0.7,    0.7,    0.7,    0.7,    0.7,    0.7,    0.7,    0.7,    0.7]
 tmax               = 20
 Imax               = 1400
+
+seed_nodes         = [250, 500, 1000]
+seed_num           = [4,   4,   4]
 ######################################
 
 # add population to sim struct
@@ -136,7 +140,7 @@ nodes = Nodes(cur_duration, cur_max_dist, cur_compliance,
 cur_phase, cat_vec, counties)
 
 
-p = zeros(Float64, num_verts, 5)
+p = ones(Float64, num_verts, 5)
 p[:, 1] .*= β_list[1]
 p[:, 2] .*= c_list[1]
 p[:, 3] .*= μ_list[1]
@@ -150,9 +154,12 @@ adj = gen_sparse_array(cat_vec, round.(Int64, population * 0.6))
 
 sim = Sim(phases, nodes, Imax, p, adj)
 
-state[3, 2] += 6
+for i = 1:size(seed_nodes, 1)
+    state[seed_nodes[i], 2] += seed_num[i] 
+    state[seed_nodes[i], 1] -= seed_num[i] 
+end
 
 prob = DiscreteProblem(SimOde, state, (0, tmax), sim) 
-cb = DiscreteCallback(condition, f!, save_positions=(true, false))
+cb = DiscreteCallback(condition, f!, save_positions=(false, false))
 sol = solve(prob, callback=cb)
 
