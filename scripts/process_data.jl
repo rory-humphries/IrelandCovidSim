@@ -1,4 +1,6 @@
+using CovidSim
 import ArchGDAL as AG
+using JLD2
 using DataFrames
 using CSV
 
@@ -57,6 +59,7 @@ deleteat!(roi_counties, 20)
 ########################################
 
 ire_counties = vcat(ni_counties, roi_counties; cols=:intersect)
+ire_counties.county .= lowercase.(ire_counties.county)
 
 ########################################
 # NI super output areas (soa's)
@@ -66,13 +69,14 @@ ire_counties = vcat(ni_counties, roi_counties; cols=:intersect)
 dataset = AG.read("data/raw/Shapefiles/super_output_areas/SOA2011.shp")
 layer = AG.getlayer(dataset, 0)
 source = AG.getspatialref(layer)
-ni_soa = DataFrame(layer)
-rename!(ni_soa, [:geometry, :id1, :name])
-ni_soa.id2 .= ""
+soa_df = DataFrame(layer)
+rename!(soa_df, [:geometry, :id, :name])
+soa_df.id = lowercase.(soa_df.id)
+soa_df.name = lowercase.(soa_df.name)
 
 AG.createcoordtrans(source, sp_ref) do transform
-    for i in 1:nrow(ni_soa)
-        AG.transform!(ni_soa[i, :geometry], transform)
+    for i in 1:nrow(soa_df)
+        AG.transform!(soa_df[i, :geometry], transform)
     end
 end
 
@@ -83,52 +87,55 @@ end
 dataset = AG.read("data/raw/Shapefiles/electoral_divisions/electoral_divisions.shp")
 layer = AG.getlayer(dataset, 0)
 source = AG.getspatialref(layer)
-roi_ed = DataFrame(layer)
-select!(roi_ed, ["", "OSIED", "EDNAME"])
-rename!(roi_ed, ["geometry", "id1", "name"])
+ed_df = DataFrame(layer)
+select!(ed_df, ["", "OSIED", "EDNAME"])
+rename!(ed_df, ["geometry", "id", "name"])
+ed_df.name = lowercase.(ed_df.name)
 
 AG.createcoordtrans(source, sp_ref) do transform
-    for i in 1:nrow(roi_ed)
-        AG.transform!(roi_ed[i, :geometry], transform)
+    for i in 1:nrow(ed_df)
+        AG.transform!(ed_df[i, :geometry], transform)
     end
 end
 
 # find which osied's (id) are combined in the shapefile
-roi_ed.id2 .= ""
-for (i, x) in enumerate(roi_ed.id1)
-    xsplit = split(x, '/')
+
+# some ed's share a shapefile area
+shared_ids = Dict{String,String}()
+N = nrow(ed_df)
+for i in 1:N
+    #println(i)
+    xsplit = split(ed_df[i, :id], '/')
     if length(xsplit) > 1
-        roi_ed[i, :id1] = xsplit[1]
-        roi_ed[i, :id2] = xsplit[2]
+        ed_df[i, :id] = xsplit[1]
+        df_row = copy(ed_df[i, :])
+        push!(ed_df, df_row)
+        ed_df[end, :id] = xsplit[2]
+        shared_ids[string(parse(Int, xsplit[2]))] = string(parse(Int, xsplit[1]))
         if length(xsplit) > 2
-            print("uh ih")
+            print("uh oh")
         end
     end
 end
-roi_ed.id1 = string.(parse.(Int, roi_ed.id1))
-for i in 1:nrow(roi_ed)
-    if roi_ed[i, :id2] != ""
-        roi_ed[i, :id2] = string(parse(Int, roi_ed[i, :id2]))
-    end
-end
+ed_df.id = string.(parse.(Int, ed_df.id))
 
 ########################################
 # Combine ed's and soa's
 ########################################
 
-ire_ed_soa = vcat(ni_soa, roi_ed)
+ed_soa_df = vcat(soa_df, ed_df)
 
 # find the counties each ed/soa belongs to
-ire_ed_soa.county .= ""
+ed_soa_df.county .= ""
 
 for i in 1:nrow(ire_counties)
-    unknowns = ire_ed_soa.county .== ""
+    unknowns = ed_soa_df.county .== ""
     county_geom = ire_counties.geometry[i]
     county = ire_counties.county[i]
     println(county, ", ", i)
-    for j in (1:nrow(ire_ed_soa))[unknowns]
-        if AG.intersects(ire_ed_soa[j, :geometry], county_geom)
-            ire_ed_soa[j, :county] = county
+    for j in (1:nrow(ed_soa_df))[unknowns]
+        if AG.intersects(ed_soa_df[j, :geometry], county_geom)
+            ed_soa_df[j, :county] = county
         end
     end
 end
@@ -145,95 +152,67 @@ id_name = split.(ed_soa_pop[:, "Electoral Division"], " - ")
 ed_soa_pop.id = String[x[1] for x in id_name]
 ed_soa_pop.name = String[x[2] for x in id_name]
 
-ire_ed_soa.population .= 0
+ed_soa_df.population .= 0
 
-ire_ed_soa = leftjoin(
-    ire_ed_soa, ed_soa_pop[:, [:id, :Population]]; on=:id1 => :id, makeunique=true
-)
-ire_ed_soa.Population[ire_ed_soa.Population .=== missing] .= 0
-ire_ed_soa.population += ire_ed_soa.Population
-select!(ire_ed_soa, Not(:Population))
-
-ire_ed_soa = leftjoin(
-    ire_ed_soa, ed_soa_pop[:, [:id, :Population]]; on=:id2 => :id, makeunique=true
-)
-ire_ed_soa.Population[ire_ed_soa.Population .=== missing] .= 0
-ire_ed_soa.population += ire_ed_soa.Population
-
-select!(ire_ed_soa, Not(:Population))
+ed_soa_df = leftjoin(ed_soa_df, ed_soa_pop[:, [:id, :Population]]; on=:id, makeunique=true)
+ed_soa_df.Population[ed_soa_df.Population .=== missing] .= 0
+ed_soa_df.population += ed_soa_df.Population
+select!(ed_soa_df, Not(:Population))
+deleteat!(ed_soa_df, ed_soa_df.population .== 0)
 
 ########################################
 # Add controids
 ########################################
 
-ire_ed_soa.centroid_x .= 0.0
-ire_ed_soa.centroid_y .= 0.0
+ed_soa_df.centroid_x .= 0.0
+ed_soa_df.centroid_y .= 0.0
 
-for i in 1:nrow(ire_ed_soa)
-    cent = AG.centroid(ire_ed_soa[i, :geometry])
-    ire_ed_soa[i, :centroid_x] = AG.getx(cent, 0)
-    ire_ed_soa[i, :centroid_y] = AG.gety(cent, 0)
+for i in 1:nrow(ed_soa_df)
+    cent = AG.centroid(ed_soa_df[i, :geometry])
+    ed_soa_df[i, :centroid_x] = AG.getx(cent, 0)
+    ed_soa_df[i, :centroid_y] = AG.gety(cent, 0)
 end
 
-"""
-# Plotting
-#
-using CairoMakie
-using GeometryBasics
+########################################
+# Commuting data
+########################################
 
-function wkb2geo(
-    geom::AG.IGeometry{AG.wkbLineString}, ::Val{N}=Val(AG.getcoorddim(geom))
-) where {N}
-    n = AG.ngeom(geom)
-    rvec = Vector{Point{N,Float32}}()
-    for i in 0:(n - 1)
-        push!(rvec, AG.getpoint(geom, i)[1:(N + 1)])
-    end
-    return LineString(rvec)
-end
+ed_travels_df = CSV.read(joinpath(data_path(), "raw", "ED_Used_Link_Info.csv"), DataFrame)
+new_names = lowercase.(replace.(names(ed_travels_df), " " => "_"))
+new_names[1] = "from_electoral_division"
+new_names[2] = "from_county"
+new_names[5] = "no_commuters"
+rename!(ed_travels_df, new_names)
 
-function wkb2geo(
-    geom::AG.IGeometry{AG.wkbPolygon}, ::Val{N}=Val(Int(AG.getcoorddim(geom)))
-) where {N}
-    nline = AG.ngeom(geom)
-    rvec = Vector{Vector{Point{N,Float32}}}([[] for _ in 1:nline])
-    for i in 0:(nline - 1)
-        g = AG.getgeom(geom, i)
-        npoint = AG.ngeom(g)
-        for j in 0:(npoint - 1)
-            push!(rvec[i + 1], AG.getpoint(g, j)[1:N])
-        end
-    end
-    return Polygon(rvec[1], rvec[2:end])
-end
+# only care about travels with given source/destination
+deleteat!(ed_travels_df, ed_travels_df.to_electoral_division .== "No fixed place of work")
+deleteat!(ed_travels_df, ed_travels_df.to_electoral_division .== "Work/school from home")
 
-function wkb2geo(
-    geom::AG.IGeometry{AG.wkbMultiPolygon}, ::Val{N}=Val(Int(AG.getcoorddim(geom)))
-) where {N}
-    npoly = AG.ngeom(geom)
-    rvec = Vector{Polygon{N,Float32}}()
-    for i in 0:(npoly - 1)
-        push!(rvec, wkb2geo(AG.getgeom(geom, i), Val(N)))
-    end
-    return MultiPolygon(rvec)
-end
+deleteat!(ed_travels_df, ed_travels_df.from_electoral_division .== "No fixed place of work")
+deleteat!(ed_travels_df, ed_travels_df.from_electoral_division .== "Work/school from home")
 
-fig = Figure()
-ax = Axis(fig[1, 1])
-myvec = MultiPolygon[]
+ed_travels_df[
+    :, [:from_electoral_division, :to_electoral_division, :from_county, :to_county]
+] =
+    lowercase.(
+        ed_travels_df[
+            :, [:from_electoral_division, :to_electoral_division, :from_county, :to_county]
+        ],
+    )
 
-for i in 1:nrow(ire_ed_soa)
-    println(i)
-    g = wkb2geo(ire_ed_soa[i, :geometry])
-    if g isa Polygon
-        push!(myvec, MultiPolygon([g]))
-    else
-        push!(myvec, g)
-    end
-    #poly!(ax, g)
-end
-poly!(ax, myvec, color=1 ./ 1:length(myvec))
+ed_travels_df.from_id .= [split(x, " - ")[1] for x in ed_travels_df.from_electoral_division]
+ed_travels_df.to_id .= [split(x, " - ")[1] for x in ed_travels_df.to_electoral_division]
 
+ed_travels_df = transform(
+    groupby(ed_travels_df, :from_id), :no_commuters => sum => :out_commuters
+)
+ed_travels_df = transform(
+    groupby(ed_travels_df, :to_id), :no_commuters => sum => :in_commuters
+)
 
-save("test.png", fig)
-"""
+########################################
+# Write data
+########################################
+
+save(joinpath(data_path(), "processed", "ed_soa_df.jld2"), "df", ed_soa_df)
+save(joinpath(data_path(), "processed", "ed_travels_df.jld2"), "df", ed_travels_df)
