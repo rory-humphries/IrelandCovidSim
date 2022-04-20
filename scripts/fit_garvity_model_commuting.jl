@@ -9,8 +9,6 @@ using Optim
 ed_soa_df = load(joinpath(data_path(), "processed", "ed_soa_df.jld2"), "df")
 ed_travels_df = load(joinpath(data_path(), "processed", "ed_travels_df.jld2"), "df")
 
-nd
-
 u = ed_soa_df.population'
 v = zeros(nrow(ed_soa_df), nrow(ed_soa_df))
 for (i, (xi, yi)) in enumerate(zip(ed_soa_df.centroid_x, ed_soa_df.centroid_y))
@@ -26,9 +24,6 @@ to_nid = Int.(leftjoin(ed_travels_df, ed_soa_df[:, [:id, :nid]]; on=:to_id => :i
 sample_counts = ed_travels_df.no_commuters
 samples = copy([from_nid to_nid]')
 
-function mle_fit(::GravityModel, u, v, f, samples, sample_counts)
-    return gravity_model_p(p) = GravityModel(u, v, f, p)
-end
 
 function op_func(p)
     gm = GravityModel(u, v, exp_gravity, p)

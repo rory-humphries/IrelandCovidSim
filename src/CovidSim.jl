@@ -7,6 +7,7 @@ using Distributions
 using UnPack
 using Random
 using StatsBase
+using Distributions 
 
 data_path() = normpath(joinpath(@__DIR__, "..", "data"))
 export data_path
@@ -26,7 +27,7 @@ export gen_sparse_array
 include("sixrd.jl")
 export sixrd!, accumulate_groups
 
-include("sixrd_multiphase_lockdown.jl")
-export SixrdMultiphase
+#include("sixrd_multiphase_lockdown.jl")
+#export SixrdMultiphase
 
 end

@@ -16,7 +16,7 @@ function GravityModel(u, v, f, p)
     Threads.@threads for i in 1:N
         ui = u[:, i]
         for j in 1:N
-            c[Threads.threadid()] += f(ui, u[:, j], v[i, j], p)
+            c[Threads.threadid()] += f(ui, u[:, j], v[:, i, j], p)
         end
     end
     return GravityModel(u, v, f, p, sum(c))
@@ -28,10 +28,10 @@ Distributions.size(d::GravityModel) = (2,)
 function Distributions._logpdf(d::GravityModel, x::AbstractVector)
     @unpack u, v, f, p, c = d
 
-    return log(f(u[:, x[1]], u[:, x[2]], v[x[1], x[2]], p) / c)
+    return log(f(u[:, x[1]], u[:, x[2]], v[:, x[1], x[2]], p) / c)
 end
 
-struct GravityModelSampler2 <: Sampleable{Multivariate,Discrete}
+struct GravityModelSampler <: Sampleable{Multivariate,Discrete}
     d::GravityModel
     rowsum::Vector{Float64} # probability of leaving from node i
     rowsumsum::Float64
@@ -43,37 +43,56 @@ function Distributions.sampler(d::GravityModel)
     for i in 1:N
         rowsum[i] += sum(pdf(d, [[i, x] for x in 1:N]))
     end
-    return GravityModelSampler2(d, rowsum, sum(rowsum))
+    return GravityModelSampler(d, rowsum, sum(rowsum))
 end
 
-Base.length(s::GravityModelSampler2) = 2
+Base.length(s::GravityModelSampler) = 2
 
 function Distributions._rand!(
-    rng::AbstractRNG, s::GravityModelSampler2, x::AbstractVector{T}
+    rng::AbstractRNG, s::GravityModelSampler, x::AbstractVector{T}
 ) where {T<:Integer}
     N = length(s.rowsum)
-    row = sample(Weights(s.rowsum, s.rowsumsum))
-    col = sample(Weights(pdf(s.d, [[row, x] for x in 1:N])))
+    row = sample(rng, Weights(s.rowsum, s.rowsumsum))
+    col = sample(rng, Weights(pdf(s.d, [[row, x] for x in 1:N])))
     return x .= [row, col]
 end
 
 function Distributions._rand!(
-    rng::AbstractRNG, s::GravityModelSampler2, A::DenseMatrix{T}
+    rng::AbstractRNG, s::GravityModelSampler, A::DenseMatrix{T}
 ) where {T<:Integer}
     N = length(s.rowsum)
     Nsamps = size(A, 2)
 
-    row_samps = sample(1:N, Weights(s.rowsum, s.rowsumsum), Nsamps)
+    row_samps = sample(rng, 1:N, Weights(s.rowsum, s.rowsumsum), Nsamps)
 
     k = 1
     for (i, count) in countmap(row_samps)
-        col_samps = sample(1:N, Weights(pdf(s.d, [[i, x] for x in 1:N])), count)
+        col_samps = sample(rng,1:N, Weights(pdf(s.d, [[i, x] for x in 1:N])), count)
 
         A[1, k:(k + count - 1)] .= i
         A[2, k:(k + count - 1)] .= col_samps
         k += count
     end
     return A
+end
+
+function Distributions.loglikelihood(d::GravityModel, samples, sample_counts)
+    if d.c == Inf
+        return Inf
+    else
+        return -sum(sample_counts .* logpdf(d, samples))
+    end
+end
+
+function Distributions.fit_mle(::Type{GravityModel}, u, v, f, p0, samples, sample_counts)
+    function op_func(p)
+        d = GravityModel(u, v, f, p)
+        return loglikelihood(d, samples, sample_counts)
+    end
+    opt = Optim.optimize(
+        op_func, p0, NelderMead(), Optim.Options(; g_tol=1e-2, show_trace=true)
+    )
+    return GravityModel(u,v,f,Optim.minimizer(opt))
 end
 
 function exp_gravity(ui, uj, v, p)
