@@ -14,9 +14,8 @@ function GravityModel(u, v, f, p)
     N = size(u, 2)
 
     Threads.@threads for i in 1:N
-        ui = u[:, i]
         for j in 1:N
-            c[Threads.threadid()] += f(ui, u[:, j], v[:, i, j], p)
+            c[Threads.threadid()] += f(u, v, p, i, j)
         end
     end
     return GravityModel(u, v, f, p, sum(c))
@@ -28,7 +27,7 @@ Distributions.size(d::GravityModel) = (2,)
 function Distributions._logpdf(d::GravityModel, x::AbstractVector)
     @unpack u, v, f, p, c = d
 
-    return log(f(u[:, x[1]], u[:, x[2]], v[:, x[1], x[2]], p) / c)
+    return log(f(u, v, p, x[1], x[2]) / c)
 end
 
 struct GravityModelSampler <: Sampleable{Multivariate,Discrete}
@@ -40,8 +39,9 @@ end
 function Distributions.sampler(d::GravityModel)
     N = size(d.u, 2)
     rowsum = zeros(N)
-    for i in 1:N
-        rowsum[i] += sum(pdf(d, [[i, x] for x in 1:N]))
+
+    Threads.@threads for i in 1:N
+        rowsum[i] = sum(pdf(d, [[i, x] for x in 1:N]))
     end
     return GravityModelSampler(d, rowsum, sum(rowsum))
 end
@@ -67,7 +67,7 @@ function Distributions._rand!(
 
     k = 1
     for (i, count) in countmap(row_samps)
-        col_samps = sample(rng,1:N, Weights(pdf(s.d, [[i, x] for x in 1:N])), count)
+        col_samps = sample(rng, 1:N, Weights(pdf(s.d, [[i, x] for x in 1:N])), count)
 
         A[1, k:(k + count - 1)] .= i
         A[2, k:(k + count - 1)] .= col_samps
@@ -92,7 +92,7 @@ function Distributions.fit_mle(::Type{GravityModel}, u, v, f, p0, samples, sampl
     opt = Optim.optimize(
         op_func, p0, NelderMead(), Optim.Options(; g_tol=1e-2, show_trace=true)
     )
-    return GravityModel(u,v,f,Optim.minimizer(opt))
+    return GravityModel(u, v, f, Optim.minimizer(opt))
 end
 
 function exp_gravity(ui, uj, v, p)

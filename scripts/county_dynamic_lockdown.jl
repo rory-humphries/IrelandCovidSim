@@ -13,6 +13,11 @@ using DataFrames
 
 using CovidSim
 
+# for progress bar
+using Logging: global_logger
+using TerminalLoggers: TerminalLogger
+global_logger(TerminalLogger())
+
 # Parameters
 ######################################
 
@@ -25,6 +30,7 @@ const phase_α = [0.0028, 0.0028, 0.0028, 0.0028, 0.0028, 0.0028, 0.0028, 0.0028
 const phase_κ = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
 const phase_max_distance = [1000.0, 2.0, 2.0, 2.0, 5.0, 5.0, 20.0, 1000.0, 1000.0]
 const phase_compliance = [0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7]
+
 const tmax = 200
 const Imax = 1400
 
@@ -33,13 +39,21 @@ const seed_num = [4, 4, 4]
 
 const gm_p = (0.5212685415091278, 0.7486233175103572, 8.549615110124643e-5)
 
-function grav_func(ui, uj, v, p)
+function exp_gravity2(u, v, p, i, j)
+    (α, β, γ) = p
+    attr_i = u[1, i]
+    attr_j = u[1, j]
+    dist = v[1, i, j]
+    return attr_i^α * attr_j^β * exp(-γ * dist)
+end
+
+function grav_func(u, v, p, i, j)
     (α, β, γ, comp) = p
-    attr_i = ui[1]
-    attr_j = uj[1]
-    max_dist_i = ui[2]
-    max_dist_j = uj[2]
-    dist = v[1]
+    attr_i = u[1, i]
+    attr_j = u[1, j]
+    max_dist_i = u[2, i]
+    max_dist_j = u[2, j]
+    dist = v[1, i, j]
 
     if max_dist_i < dist || max_dist_j < dist
         return attr_i^α * attr_j^β * exp(-γ * dist) * (1 - comp)
@@ -141,12 +155,9 @@ end
 # The callback which updates the parameters at each step
 #######################################
 
-function affect_params1!(integrator)
-    #Nv = size(integrator.u, 1)
+function affect_params!(integrator)
     Np = size(integrator.p.phase_duration, 1)
-    # IJ = rand(cb.spl, 10000)
 
-    #integrator.p.sixrd_p[6] .= sparse(IJ[1, :], IJ[2, :], ones(10000), Nv, Nv)
     integrator.p.cur_duration .-= 1
 
     I_counties = accumulate_groups(integrator.u[:, 2], integrator.p.counties)
@@ -176,8 +187,8 @@ function affect_params1!(integrator)
     integrator.p.sixrd_p[5] .= integrator.p.phase_c[integrator.p.cur_phase]
     return nothing
 end
-param_update_cb = DiscreteCallback(
-    (args...) -> true, affect_params1!; save_positions=(false, false)
+update_params_cb = DiscreteCallback(
+    (args...) -> true, affect_params!; save_positions=(false, false)
 )
 
 ########################################
@@ -187,14 +198,12 @@ param_update_cb = DiscreteCallback(
 function affect_adj!(integrator)
     N = size(integrator.u, 1)
     u = cat(integrator.p.population', integrator.p.cur_max_dist'; dims=1)
-    println(size(u))
     v = reshape(integrator.p.distances, (1, N, N))
     gm = GravityModel(u, v, integrator.p.grav_func, (integrator.p.grav_p..., 0.7))
 
     spl = sampler(gm)
     IJ = rand(spl, 10000)
     integrator.p.sixrd_p[6] .= sparse(IJ[1, :], IJ[2, :], ones(10000), N, N)
-    display(integrator.p.sixrd_p[6])
     return nothing
 end
 update_adj_cb = DiscreteCallback(
@@ -223,7 +232,7 @@ const num_phases = size(phase_duration, 1)
 const u = copy(population')
 const v = reshape(distances, (1, N, N))
 
-const gm = GravityModel(u, v, exp_gravity, gm_p)
+const gm = GravityModel(u, v, exp_gravity2, gm_p)
 const spl = sampler(gm)
 
 const IJ = rand(spl, 10000)
@@ -264,6 +273,11 @@ const sixrd_lockdown_p = SixrdCountyLockdownParams(
     gm_p,
 )
 
-prob = DiscreteProblem(sixrd_county_lockdown!, u0, (0, 5), sixrd_lockdown_p)
-sol = solve(prob, FunctionMap{true}(); callback=update_adj_cb)
-
+prob = DiscreteProblem(sixrd_county_lockdown!, u0, (0, tmax), sixrd_lockdown_p)
+sol = solve(
+    prob,
+    FunctionMap{true}();
+    callback=CallbackSet(update_adj_cb, update_params_cb),
+    progress=true,
+    progress_steps=1,
+)
