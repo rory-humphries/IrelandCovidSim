@@ -11,7 +11,7 @@ end
 
 function GravityModel(u, v, f, p)
     c = zeros(Threads.nthreads())
-    N = size(u, 2)
+    N = last(size(u))
 
     Threads.@threads for i in 1:N
         for j in 1:N

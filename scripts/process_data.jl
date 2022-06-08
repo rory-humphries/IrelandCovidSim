@@ -1,8 +1,9 @@
 using CovidSim
-import ArchGDAL as AG
 using JLD2
 using DataFrames
 using CSV
+
+import ArchGDAL as AG
 
 ########################################
 # Northern Ireland Counties
@@ -149,15 +150,12 @@ ed_soa_pop = CSV.read("data/raw/Joined_Pop_Data_CSO_NISRA.csv", DataFrame)
 select!(ed_soa_pop, ["Electoral Division", "Population"])
 
 id_name = split.(ed_soa_pop[:, "Electoral Division"], " - ")
-ed_soa_pop.id = String[x[1] for x in id_name]
-ed_soa_pop.name = String[x[2] for x in id_name]
-
-ed_soa_df.population .= 0
+ed_soa_pop.id = lowercase.(String[x[1] for x in id_name])
+ed_soa_pop.name = lowercase.(String[x[2] for x in id_name])
 
 ed_soa_df = leftjoin(ed_soa_df, ed_soa_pop[:, [:id, :Population]]; on=:id, makeunique=true)
-ed_soa_df.Population[ed_soa_df.Population .=== missing] .= 0
-ed_soa_df.population += ed_soa_df.Population
-select!(ed_soa_df, Not(:Population))
+rename!(ed_soa_df, lowercase.(names(ed_soa_df)))
+ed_soa_df.population[ed_soa_df.population .=== missing] .= 0
 deleteat!(ed_soa_df, ed_soa_df.population .== 0)
 
 ########################################
