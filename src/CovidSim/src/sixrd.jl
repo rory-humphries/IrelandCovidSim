@@ -1,11 +1,13 @@
-function sixrd!(du, u, p, t=nothing)
+function sixrd_metapop!(du, u, p, t=nothing)
     β = p[1]
     μ = p[2]
     α = p[3]
     κ = p[4]
     c = p[5]
-    adj = p[6]
-    adj -= Diagonal(adj) # remove self travels
+
+    W = p[6]
+    W -= Diagonal(W) # remove self travels
+    Nv = size(W, 1)
 
     S = @view u[:, 1]
     I = @view u[:, 2]
@@ -15,27 +17,37 @@ function sixrd!(du, u, p, t=nothing)
 
     N = S + I + X + R + D
 
-    ΔN = N + sum(adj; dims=1)' - sum(adj; dims=2)
+    Wi = W * ones(Nv)
 
-    Smat = Diagonal(S .* inv.(N)) * adj
-    Imat = Diagonal(I .* inv.(N)) * adj
+    du[:, 1] .= -(β .* c .* S .* I ./ N) + (W' * S) - (S .* Wi)
+    du[:, 2] .= (β .* c .* S .* I ./ N) - ((μ .+ α .+ κ) .* I) + (W' * I) - (I .* Wi)
+    du[:, 3] .= (κ .* I) - ((μ + α) .* X) + (W' * X) - (X .* Wi)
+    du[:, 4] .= (μ .* I) + (μ .* X) + (W' * R) - (R .* Wi)
+    du[:, 5] .= (α .* I) + (α .* X) + (W' * D) - (D .* Wi)
 
-    ΔS⁻ = S - sum(Smat; dims=2)
-    ΔI = I - sum(Imat; dims=2) + sum(Imat; dims=1)'
-    ΔIΔN⁻¹ = ΔI ./ ΔN
+    return du
+end
 
-    du[:, 5] .= α .* (I + X)
-    du[:, 4] .= μ .* (I + X)
-    du[:, 3] .= κ .* I - μ .* X - α .* X
-    du[:, 2] .= (-κ - μ - α) .* I
+function sixrd!(du, u, p, t=nothing)
+    β = p[1]
+    μ = p[2]
+    α = p[3]
+    κ = p[4]
+    c = p[5]
+    
+    S = u[1]
+    I = u[2]
+    X = u[3]
+    R = u[4]
+    D = u[5]
 
-    val1 = β .* c .* ΔS⁻ .* ΔIΔN⁻¹
-    du[:, 2] .+= vec(val1)
-    du[:, 1] .= -vec(val1)
+    N = S + I + X + R + D
 
-    val2 = β .* c .* (Smat * ΔIΔN⁻¹)
-    du[:, 2] .+= vec(val2)
-    du[:, 1] .+= -vec(val2)
+    du[1] = -(β * c * S .* I ./ N) 
+    du[2] = (β * c * S .* I ./ N) - ((μ + α + κ) * I)
+    du[3] = (κ * I) - ((μ + α) * X)
+    du[4] = (μ * I) + (μ * X)
+    du[5] = (α * I) + (α * X)
 
     return du
 end

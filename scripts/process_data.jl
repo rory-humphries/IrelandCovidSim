@@ -1,58 +1,59 @@
+using IrelandCovidSim
 using CovidSim
 using JLD2
 using DataFrames
 using CSV
+using GeoDataFrames
+using GeoFormatTypes
 
 import ArchGDAL as AG
+
+# have all datasets use this spatial projection
+sp_ref = AG.importEPSG(29903)
 
 ########################################
 # Northern Ireland Counties
 ########################################
 
-dataset = AG.read("data/raw/Shapefiles/northern_ireland_counties")
-layer = AG.getlayer(dataset, 0)
+ni_counties = GeoDataFrames.read(
+    project_path("data", "raw", "Shapefiles", "northern_ireland_counties")
+)
 
-# have all datasets use this spatial projection
-sp_ref = AG.getspatialref(layer)
-
-ni_counties = DataFrame(layer)
 # remove unneeded cols
-select!(ni_counties, ["", "CountyName"])
-rename!(ni_counties, [:geometry, :county])
+select!(ni_counties, ["geom", "CountyName"])
+rename!(ni_counties, [:geom, :county])
 
+AG.createcoordtrans(AG.getspatialref(ni_counties.geom[1]), sp_ref) do coordtrans
+    for i in 1:nrow(ni_counties)
+        AG.transform!(ni_counties.geom[i], coordtrans)
+    end
+end
 ########################################
 # Republic of Ireland Counties
 ########################################
 
-dataset = AG.read("data/raw/Shapefiles/roi_counties")
-layer = AG.getlayer(dataset, 0)
+roi_counties = GeoDataFrames.read(project_path("data", "raw", "Shapefiles", "roi_counties"))
+select!(roi_counties, ["geom", "COUNTY"])
+rename!(roi_counties, [:geom, :county])
 
-roi_counties = DataFrame(layer)
-select!(roi_counties, ["", "COUNTY"])
-rename!(roi_counties, [:geometry, :county])
+AG.createcoordtrans(AG.getspatialref(roi_counties.geom[1]), sp_ref) do coordtrans
+    for i in 1:nrow(roi_counties)
+        AG.transform!(roi_counties.geom[i], coordtrans)
+    end
+end
 
 # combine cork city and council polygons
-roi_counties[2, :geometry] = AG.union(
-    roi_counties[2, :geometry], roi_counties[25, :geometry]
-)
+roi_counties[2, :geom] = AG.union(roi_counties[2, :geom], roi_counties[25, :geom])
 deleteat!(roi_counties, 25)
 
 # combine dublin city, south dublin, fingal and dun laoghaire polygons
-roi_counties[1, :geometry] = AG.union(
-    roi_counties[1, :geometry], roi_counties[10, :geometry]
-)
-roi_counties[1, :geometry] = AG.union(
-    roi_counties[1, :geometry], roi_counties[11, :geometry]
-)
-roi_counties[1, :geometry] = AG.union(
-    roi_counties[1, :geometry], roi_counties[22, :geometry]
-)
+roi_counties[1, :geom] = AG.union(roi_counties[1, :geom], roi_counties[10, :geom])
+roi_counties[1, :geom] = AG.union(roi_counties[1, :geom], roi_counties[11, :geom])
+roi_counties[1, :geom] = AG.union(roi_counties[1, :geom], roi_counties[22, :geom])
 deleteat!(roi_counties, [10, 11, 22])
 
 # combine galway city and council polygons
-roi_counties[3, :geometry] = AG.union(
-    roi_counties[3, :geometry], roi_counties[20, :geometry]
-)
+roi_counties[3, :geom] = AG.union(roi_counties[3, :geom], roi_counties[20, :geom])
 deleteat!(roi_counties, 20)
 
 ########################################
@@ -67,17 +68,16 @@ ire_counties.county .= lowercase.(ire_counties.county)
 ########################################
 
 # holds shapefile for northern irish super output areas
-dataset = AG.read("data/raw/Shapefiles/super_output_areas/SOA2011.shp")
-layer = AG.getlayer(dataset, 0)
-source = AG.getspatialref(layer)
-soa_df = DataFrame(layer)
-rename!(soa_df, [:geometry, :id, :name])
+soa_df = GeoDataFrames.read(
+    project_path("data", "raw", "Shapefiles", "super_output_areas", "SOA2011.shp")
+)
+rename!(soa_df, [:geom, :id, :name])
 soa_df.id = lowercase.(soa_df.id)
 soa_df.name = lowercase.(soa_df.name)
 
-AG.createcoordtrans(source, sp_ref) do transform
+AG.createcoordtrans(AG.getspatialref(soa_df.geom[1]), sp_ref) do transform
     for i in 1:nrow(soa_df)
-        AG.transform!(soa_df[i, :geometry], transform)
+        AG.transform!(soa_df.geom[i], transform)
     end
 end
 
@@ -85,17 +85,14 @@ end
 # ROI electoral divisions (ed's)
 ########################################
 
-dataset = AG.read("data/raw/Shapefiles/electoral_divisions/electoral_divisions.shp")
-layer = AG.getlayer(dataset, 0)
-source = AG.getspatialref(layer)
-ed_df = DataFrame(layer)
-select!(ed_df, ["", "OSIED", "EDNAME"])
-rename!(ed_df, ["geometry", "id", "name"])
+ed_df = GeoDataFrames.read(project_path("data", "raw", "Shapefiles", "electoral_divisions"))
+select!(ed_df, ["geom", "OSIED", "EDNAME"])
+rename!(ed_df, ["geom", "id", "name"])
 ed_df.name = lowercase.(ed_df.name)
 
-AG.createcoordtrans(source, sp_ref) do transform
+AG.createcoordtrans(AG.getspatialref(soa_df.geom[1]), sp_ref) do transform
     for i in 1:nrow(ed_df)
-        AG.transform!(ed_df[i, :geometry], transform)
+        AG.transform!(ed_df.geom[i], transform)
     end
 end
 
@@ -131,11 +128,11 @@ ed_soa_df.county .= ""
 
 for i in 1:nrow(ire_counties)
     unknowns = ed_soa_df.county .== ""
-    county_geom = ire_counties.geometry[i]
+    county_geom = ire_counties.geom[i]
     county = ire_counties.county[i]
     println(county, ", ", i)
     for j in (1:nrow(ed_soa_df))[unknowns]
-        if AG.intersects(ed_soa_df[j, :geometry], county_geom)
+        if AG.intersects(ed_soa_df[j, :geom], county_geom)
             ed_soa_df[j, :county] = county
         end
     end
@@ -166,7 +163,7 @@ ed_soa_df.centroid_x .= 0.0
 ed_soa_df.centroid_y .= 0.0
 
 for i in 1:nrow(ed_soa_df)
-    cent = AG.centroid(ed_soa_df[i, :geometry])
+    cent = AG.centroid(ed_soa_df[i, :geom])
     ed_soa_df[i, :centroid_x] = AG.getx(cent, 0)
     ed_soa_df[i, :centroid_y] = AG.gety(cent, 0)
 end
@@ -175,7 +172,7 @@ end
 # Commuting data
 ########################################
 
-ed_travels_df = CSV.read(joinpath(data_path(), "raw", "ED_Used_Link_Info.csv"), DataFrame)
+ed_travels_df = CSV.read(project_path("data", "raw", "ED_Used_Link_Info.csv"), DataFrame)
 new_names = lowercase.(replace.(names(ed_travels_df), " " => "_"))
 new_names[1] = "from_electoral_division"
 new_names[2] = "from_county"
@@ -212,5 +209,32 @@ ed_travels_df = transform(
 # Write data
 ########################################
 
-save(joinpath(data_path(), "processed", "ed_soa_df.jld2"), "df", ed_soa_df)
-save(joinpath(data_path(), "processed", "ed_travels_df.jld2"), "df", ed_travels_df)
+crs = GeoFormatTypes.ProjString(AG.toPROJ4(sp_ref))
+
+if !isdir(project_path("data", "processed", "ed_soa_shapefile"))
+    mkdir(project_path("data", "processed", "ed_soa_shapefile"))
+end
+GeoDataFrames.write(
+    project_path("data", "processed", "ed_soa_shapefile", "ed_soa.shp"),
+    ed_soa_df;
+    crs=crs,
+)
+
+save(project_path("data", "processed", "ed_travels_df.jld2"), "df", ed_travels_df)
+
+ire_counties = leftjoin(
+    ire_counties, combine(groupby(ed_soa_df, :county), :population => sum); on=:county
+)
+
+rename!(ire_counties, :population_sum=>:populaiton)
+disallowmissing!(ire_counties)
+
+if !isdir(project_path("data", "processed", "ire_counties_shapefile"))
+    mkdir(project_path("data", "processed", "ire_counties_shapefile"))
+end
+GeoDataFrames.write(
+    project_path("data", "processed", "ire_counties_shapefile", "ire_counties.shp"),
+    ire_counties;
+    crs=crs,
+)
+

@@ -18,6 +18,6 @@ include("radiation_model.jl")
 export radiation_model, radiation_sij, radiation_si
 
 include("sixrd.jl")
-export sixrd!, accumulate_groups
+export sixrd!, sixrd_metapop!, accumulate_groups
 
 end
